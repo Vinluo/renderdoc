@@ -334,18 +334,23 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
       }
     }
 
-    if(patched.memoryTypeIndex >= m_PhysicalDeviceData.memProps.memoryTypeCount)
+    const uint32_t captureMemoryTypeIndex = AllocateInfo.memoryTypeIndex;
+    const uint32_t replayMemoryTypeIndex = RemapMemoryTypeIndexForReplay(captureMemoryTypeIndex);
+
+    if(replayMemoryTypeIndex >= m_PhysicalDeviceData.memProps.memoryTypeCount)
     {
       SET_ERROR_RESULT(
           m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
           "Tried to allocate memory from index %u, but on replay we only have %u memory types.\n"
           "\n%s",
-          patched.memoryTypeIndex, m_PhysicalDeviceData.memProps.memoryTypeCount,
+          captureMemoryTypeIndex, m_PhysicalDeviceData.memProps.memoryTypeCount,
           GetPhysDeviceCompatString(
-              false, patched.memoryTypeIndex >= m_OrigPhysicalDeviceData.memProps.memoryTypeCount)
+              false, captureMemoryTypeIndex >= m_OrigPhysicalDeviceData.memProps.memoryTypeCount)
               .c_str());
       return false;
     }
+
+    patched.memoryTypeIndex = replayMemoryTypeIndex;
 
     // apply workaround for presumed windows bug
     if(GetDriverInfo().NVUnalignedBDAIssue() && ser.VersionAtLeast(0x17))
@@ -366,7 +371,9 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
     {
       ResourceId live = GetResourceManager()->WrapResource(Memory, Unwrap(device), mem);
 
-      m_CreationInfo.m_Memory[live].Init(GetResourceManager(), m_CreationInfo, &AllocateInfo);
+      VkMemoryAllocateInfo creationAllocateInfo = AllocateInfo;
+      creationAllocateInfo.memoryTypeIndex = replayMemoryTypeIndex;
+      m_CreationInfo.m_Memory[live].Init(GetResourceManager(), m_CreationInfo, &creationAllocateInfo);
 
       if(m_CreationInfo.m_Memory[live].opaqueAddr != 0)
       {
@@ -462,7 +469,7 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
 
         // Can't create a memory-spanning buffer for this allocation.
         // For descriptor buffers try again if that is enabled as those memory types are sometimes unique.
-        if((((1 << AllocateInfo.memoryTypeIndex) & mrq.memoryTypeBits) == 0) && DescriptorBuffers())
+        if((((1U << replayMemoryTypeIndex) & mrq.memoryTypeBits) == 0) && DescriptorBuffers())
         {
           ObjDisp(device)->DestroyBuffer(Unwrap(device), buf, NULL);
 
@@ -477,7 +484,7 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
 
         // check that this allocation type can actually be bound to a buffer. Allocations that can't
         // be used with buffers we can just skip and leave wholeMemBuf as NULL.
-        if((1 << AllocateInfo.memoryTypeIndex) & mrq.memoryTypeBits)
+        if((1U << replayMemoryTypeIndex) & mrq.memoryTypeBits)
         {
           RDCASSERT(mrq.size <= AllocateInfo.allocationSize, mrq.size, AllocateInfo.allocationSize);
 

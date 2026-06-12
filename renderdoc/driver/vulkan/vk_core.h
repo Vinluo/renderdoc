@@ -1456,6 +1456,7 @@ public:
   uint32_t GetReadbackMemoryIndex(uint32_t resourceCompatibleBitmask);
   uint32_t GetUploadMemoryIndex(uint32_t resourceCompatibleBitmask);
   uint32_t GetGPULocalMemoryIndex(uint32_t resourceCompatibleBitmask);
+  uint32_t RemapMemoryTypeIndexForReplay(uint32_t captureMemoryTypeIndex);
 
   // Low-level implementation, always prefer the two below
   MemoryAllocation AllocateMemoryForResource(bool buffer, VkMemoryRequirements mrq,

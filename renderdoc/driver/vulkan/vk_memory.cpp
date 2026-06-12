@@ -256,6 +256,96 @@ uint32_t WrappedVulkan::PhysicalDeviceData::GetMemoryIndex(uint32_t resourceComp
   return best;
 }
 
+uint32_t WrappedVulkan::RemapMemoryTypeIndexForReplay(uint32_t captureMemoryTypeIndex)
+{
+  if(captureMemoryTypeIndex < m_PhysicalDeviceData.memProps.memoryTypeCount)
+    return captureMemoryTypeIndex;
+
+  if(captureMemoryTypeIndex >= m_OrigPhysicalDeviceData.memProps.memoryTypeCount)
+    return ~0U;
+
+  const VkMemoryType &captureType =
+      m_OrigPhysicalDeviceData.memProps.memoryTypes[captureMemoryTypeIndex];
+  const VkMemoryPropertyFlags captureFlags = captureType.propertyFlags;
+
+  for(uint32_t replayIndex = 0; replayIndex < m_PhysicalDeviceData.memProps.memoryTypeCount;
+      replayIndex++)
+  {
+    if(m_PhysicalDeviceData.memProps.memoryTypes[replayIndex].propertyFlags == captureFlags)
+    {
+      RDCWARN("Remapping capture memory type %u to replay memory type %u with matching flags %s",
+              captureMemoryTypeIndex, replayIndex,
+              ToStr((VkMemoryPropertyFlagBits)captureFlags).c_str());
+      return replayIndex;
+    }
+  }
+
+  const VkMemoryPropertyFlags requiredFlags =
+      captureFlags &
+      (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+       VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT | VK_MEMORY_PROPERTY_PROTECTED_BIT |
+       VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD | VK_MEMORY_PROPERTY_DEVICE_UNCACHED_BIT_AMD |
+       VK_MEMORY_PROPERTY_RDMA_CAPABLE_BIT_NV);
+
+  const bool captureDeviceLocalHeap =
+      (m_OrigPhysicalDeviceData.memProps.memoryHeaps[captureType.heapIndex].flags &
+       VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+
+  uint32_t bestIndex = ~0U;
+  uint32_t bestScore = 0;
+
+  for(uint32_t replayIndex = 0; replayIndex < m_PhysicalDeviceData.memProps.memoryTypeCount;
+      replayIndex++)
+  {
+    const VkMemoryType &replayType = m_PhysicalDeviceData.memProps.memoryTypes[replayIndex];
+    const VkMemoryPropertyFlags replayFlags = replayType.propertyFlags;
+
+    if((replayFlags & requiredFlags) != requiredFlags)
+      continue;
+
+    uint32_t score = 1;
+
+    if((replayFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ==
+       (captureFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+      score += 8;
+
+    if((replayFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ==
+       (captureFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
+      score += 4;
+
+    if((replayFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ==
+       (captureFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+      score += 2;
+
+    if((replayFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ==
+       (captureFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+      score += 2;
+
+    const bool replayDeviceLocalHeap =
+        (m_PhysicalDeviceData.memProps.memoryHeaps[replayType.heapIndex].flags &
+         VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+    if(replayDeviceLocalHeap == captureDeviceLocalHeap)
+      score += 4;
+
+    if(bestIndex == ~0U || score > bestScore)
+    {
+      bestIndex = replayIndex;
+      bestScore = score;
+    }
+  }
+
+  if(bestIndex != ~0U)
+  {
+    RDCWARN(
+        "Remapping capture memory type %u (%s) to replay memory type %u (%s)",
+        captureMemoryTypeIndex, ToStr((VkMemoryPropertyFlagBits)captureFlags).c_str(), bestIndex,
+        ToStr((VkMemoryPropertyFlagBits)m_PhysicalDeviceData.memProps.memoryTypes[bestIndex].propertyFlags)
+            .c_str());
+  }
+
+  return bestIndex;
+}
+
 MemoryAllocation WrappedVulkan::AllocateMemoryForResource(bool buffer, VkMemoryRequirements mrq,
                                                           MemoryScope scope, MemoryType type)
 {
